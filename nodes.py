@@ -9,7 +9,8 @@ class TaylorSeer:
                 "model_type": (["flux"], {"default": "flux", "tooltip": "Supported diffusion model."}),
                 "fresh_threshold": ("INT", {"default": 6, "min": 3, "max": 7, "step": 1, "tooltip": "Fresh threshold."}),
                 "max_order": ("INT", {"default": 2, "min": 0, "max": 2, "step": 1, "tooltip": "Max order."}),
-                "first_enhance": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "First enhance."})
+                "first_enhance": ("INT", {"default": 3, "min": 0, "max": 100, "step": 1, "tooltip": "First enhance."}),
+                "last_enhance": ("INT", {"default": 20, "min": 0, "max": 100, "step": 1, "tooltip": "Last enhance."})
             }
         }
     
@@ -19,7 +20,7 @@ class TaylorSeer:
     CATEGORY = "TaylorSeer"
     TITLE = "TaylorSeer"
     
-    def apply_taylorseer(self, model, model_type: str, fresh_threshold: int, max_order: int, first_enhance: int):
+    def apply_taylorseer(self, model, model_type: str, fresh_threshold: int, max_order: int, first_enhance: int, last_enhance: int):
         new_model = model.clone()
         if 'transformer_options' not in new_model.model_options:
             new_model.model_options['transformer_options'] = {} 
@@ -46,7 +47,7 @@ class TaylorSeer:
                         break
             # init cache
             if current_step_index == 0:
-                new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_flux(fresh_threshold, max_order, first_enhance, len(sigmas))
+                new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
             with context:
                 return model_function(input, timestep, **c)
 

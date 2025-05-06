@@ -276,7 +276,7 @@ def flux_single_block_forward(self, x: Tensor, vec: Tensor, pe: Tensor, attn_mas
         x = torch.nan_to_num(x, nan=0.0, posinf=65504, neginf=-65504)
     return x
 
-def cache_init_flux(fresh_threshold, max_order, first_enhance, steps):   
+def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, steps):   
     '''
     Initialization for cache.
     '''
@@ -323,6 +323,7 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, steps):
     cache_dic['taylor_cache'] = True
     cache_dic['max_order'] = max_order
     cache_dic['first_enhance'] = first_enhance
+    cache_dic['last_enhance'] = last_enhance
 
     current = {}
     current['activated_steps'] = [0]
@@ -364,7 +365,7 @@ def cal_type(cache_dic, current):
     else:
         fresh_interval = cache_dic['fresh_threshold']
 
-    if (first_step) or (cache_dic['cache_counter'] == fresh_interval - 1 ):
+    if (first_step) or (cache_dic['cache_counter'] == fresh_interval - 1 ) or (current['step'] >= cache_dic['last_enhance'] - 1):
         current['type'] = 'full'
         cache_dic['cache_counter'] = 0
         current['activated_steps'].append(current['step'])
