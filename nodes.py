@@ -10,7 +10,7 @@ class TaylorSeer:
                 "fresh_threshold": ("INT", {"default": 6, "min": 3, "max": 7, "step": 1, "tooltip": "Fresh threshold."}),
                 "max_order": ("INT", {"default": 2, "min": 0, "max": 2, "step": 1, "tooltip": "Max order."}),
                 "first_enhance": ("INT", {"default": 3, "min": 0, "max": 100, "step": 1, "tooltip": "First enhance."}),
-                "last_enhance": ("INT", {"default": 20, "min": 0, "max": 100, "step": 1, "tooltip": "Last enhance."})
+                "last_enhance": ("INT", {"default": 50, "min": 0, "max": 100, "step": 1, "tooltip": "Last enhance."})
             }
         }
     
