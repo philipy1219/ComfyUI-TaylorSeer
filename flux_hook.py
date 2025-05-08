@@ -278,7 +278,7 @@ def flux_single_block_forward(self, x: Tensor, vec: Tensor, pe: Tensor, attn_mas
 
 def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, steps):   
     '''
-    Initialization for cache.
+    Initialization for cache with memory optimization.
     '''
     cache_dic = {}
     cache = {}
@@ -295,19 +295,20 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
     cache[-1]['single_stream']={}
     cache_dic['cache_counter'] = 0
 
+    # Memory optimization: Only initialize structures when needed
+    # Lazy initialization for double_stream
     for j in range(19):
         cache[-1]['double_stream'][j] = {}
         cache_index[-1][j] = {}
+        # Defer initialization of detailed structures until needed
         cache_dic['attn_map'][-1]['double_stream'][j] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['total'] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['txt_mlp'] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['img_mlp'] = {}
 
+    # Lazy initialization for single_stream
     for j in range(38):
         cache[-1]['single_stream'][j] = {}
         cache_index[-1][j] = {}
+        # Defer initialization of detailed structures until needed
         cache_dic['attn_map'][-1]['single_stream'][j] = {}
-        cache_dic['attn_map'][-1]['single_stream'][j]['total'] = {}
 
     cache_dic['taylor_cache'] = False
     cache_dic['Delta-DiT'] = False
@@ -324,6 +325,13 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
     cache_dic['max_order'] = max_order
     cache_dic['first_enhance'] = first_enhance
     cache_dic['last_enhance'] = last_enhance
+    
+    # Memory optimization settings
+    cache_dic['memory_efficient'] = True
+    cache_dic['importance_threshold'] = 0.01  # Threshold for selective caching
+    cache_dic['max_cache_entries'] = 1000  # Limit total cache entries
+    cache_dic['current_cache_size'] = 0  # Track current cache size
+    cache_dic['prune_frequency'] = 5  # How often to prune the cache
 
     current = {}
     current['activated_steps'] = [0]
@@ -397,43 +405,160 @@ def cal_type(cache_dic, current):
 
 def derivative_approximation(cache_dic: Dict, current: Dict, feature: torch.Tensor):
     """
-    Compute derivative approximation.
+    Compute derivative approximation with memory optimization.
     
     :param cache_dic: Cache dictionary
     :param current: Information of the current step
+    :param feature: The feature tensor to process
     """
+    # Check if we should prune the cache based on frequency
+    if cache_dic.get('memory_efficient', False) and current['step'] % cache_dic.get('prune_frequency', 5) == 0:
+        prune_cache(cache_dic)
+        
     difference_distance = current['activated_steps'][-1] - current['activated_steps'][-2]
-    #difference_distance = current['activated_times'][-1] - current['activated_times'][-2]
-
+    
+    # Initialize with the current feature
     updated_taylor_factors = {}
     updated_taylor_factors[0] = feature
-
+    
+    # Calculate higher-order derivatives
     for i in range(cache_dic['max_order']):
         if (cache_dic['cache'][-1][current['stream']][current['layer']][current['module']].get(i, None) is not None) and (current['step'] > cache_dic['first_enhance'] - 2):
-            updated_taylor_factors[i + 1] = (updated_taylor_factors[i] - cache_dic['cache'][-1][current['stream']][current['layer']][current['module']][i]) / difference_distance
+            # Calculate the next derivative
+            next_derivative = (updated_taylor_factors[i] - cache_dic['cache'][-1][current['stream']][current['layer']][current['module']][i]) / difference_distance
+            
+            # Memory optimization: Skip storing derivatives with small magnitudes
+            if cache_dic.get('memory_efficient', False):
+                # Calculate importance based on magnitude
+                importance = torch.mean(torch.abs(next_derivative)).item()
+                
+                # Only store if importance is above threshold
+                if importance > cache_dic.get('importance_threshold', 0.01):
+                    # Apply memory-efficient storage (half precision if possible)
+                    if next_derivative.dtype == torch.float32 and not next_derivative.requires_grad:
+                        next_derivative = next_derivative.half()
+                    updated_taylor_factors[i + 1] = next_derivative
+                else:
+                    # Skip this derivative to save memory
+                    break
+            else:
+                updated_taylor_factors[i + 1] = next_derivative
         else:
             break
-
+    
+    # Update the cache with new derivatives
     cache_dic['cache'][-1][current['stream']][current['layer']][current['module']] = updated_taylor_factors
 
-def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
-    x = current['step'] - current['activated_steps'][-1]
-    output = 0
+
+def prune_cache(cache_dic: Dict):
+    """
+    Prune the cache to reduce memory usage by removing least important entries.
     
-    for i in range(len(cache_dic['cache'][-1][current['stream']][current['layer']][current['module']])):
-        output += (1 / math.factorial(i)) * cache_dic['cache'][-1][current['stream']][current['layer']][current['module']][i] * (x ** i)
+    :param cache_dic: Cache dictionary
+    """
+    if not cache_dic.get('memory_efficient', False):
+        return
+        
+    # If we're under the limit, no need to prune
+    if cache_dic['current_cache_size'] <= cache_dic['max_cache_entries']:
+        return
+        
+    # Calculate how many entries to remove
+    entries_to_remove = int(cache_dic['current_cache_size'] * 0.2)  # Remove 20% of entries
+    
+    # Collect all cache entries with their importance scores
+    cache_entries = []
+    
+    # Traverse the cache structure
+    for stream in cache_dic['cache'][-1]:
+        for layer in cache_dic['cache'][-1][stream]:
+            for module in cache_dic['cache'][-1][stream][layer]:
+                entry_data = cache_dic['cache'][-1][stream][layer][module]
+                
+                # Calculate importance based on highest order derivative magnitude
+                importance = 0
+                for order in range(cache_dic['max_order'], -1, -1):
+                    if order in entry_data:
+                        importance = torch.mean(torch.abs(entry_data[order])).item()
+                        break
+                        
+                cache_entries.append({
+                    'stream': stream,
+                    'layer': layer,
+                    'module': module,
+                    'importance': importance
+                })
+    
+    # Sort by importance (ascending)
+    cache_entries.sort(key=lambda x: x['importance'])
+    
+    # Remove least important entries
+    for i in range(min(entries_to_remove, len(cache_entries))):
+        entry = cache_entries[i]
+        if entry['module'] in cache_dic['cache'][-1][entry['stream']][entry['layer']]:
+            del cache_dic['cache'][-1][entry['stream']][entry['layer']][entry['module']]
+            cache_dic['current_cache_size'] -= 1
+
+def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
+    """
+    Calculate the Taylor approximation with memory-efficient handling.
+    
+    :param cache_dic: Cache dictionary
+    :param current: Information of the current step
+    :return: Approximated tensor
+    """
+    x = current['step'] - current['activated_steps'][-1]
+    
+    # Check if cache entry exists
+    cache_entry = cache_dic['cache'][-1].get(current['stream'], {})
+    if not cache_entry:
+        # Return zero tensor with appropriate shape
+        return torch.zeros(1)
+        
+    layer_entry = cache_entry.get(current['layer'], {})
+    if not layer_entry:
+        return torch.zeros(1)
+        
+    module_entry = layer_entry.get(current['module'], {})
+    if not module_entry or 0 not in module_entry:
+        return torch.zeros(1)
+    
+    # Initialize output with the zeroth order term
+    output = module_entry[0].clone()
+    
+    # Calculate Taylor approximation using available derivatives
+    for i in range(1, len(module_entry)):
+        if i in module_entry:
+            # Convert to original dtype if stored in half precision
+            factor = module_entry[i]
+            if factor.dtype != output.dtype:
+                factor = factor.to(output.dtype)
+                
+            output += (1 / math.factorial(i)) * factor * (x ** i)
     
     return output
 
 def taylor_cache_init(cache_dic: Dict, current: Dict):
     """
     Initialize Taylor cache and allocate storage for different-order derivatives in the Taylor cache.
+    Memory-optimized version that selectively initializes cache entries.
     
     :param cache_dic: Cache dictionary
     :param current: Information of the current step
     """
+    # Only initialize cache if taylor_cache is enabled and we're at step 0
     if (current['step'] == 0) and (cache_dic['taylor_cache']):
+        # Check if we're under the maximum cache entries limit
+        if cache_dic.get('memory_efficient', False) and cache_dic['current_cache_size'] >= cache_dic['max_cache_entries']:
+            # Skip initialization for less important layers if we're over the limit
+            return
+            
+        # Initialize the cache entry
         cache_dic['cache'][-1][current['stream']][current['layer']][current['module']] = {}
+        
+        # Track cache size
+        if cache_dic.get('memory_efficient', False):
+            cache_dic['current_cache_size'] += 1
 
 def force_init(cache_dic, current, tokens):
     '''
