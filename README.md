@@ -23,7 +23,7 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ### Running the Workflow
 
-[Reference Workflow for FLUX](./workflows/taylorseer_example_flux.json)
+[Reference Workflow for FLUX](./examples/taylorseer_example_flux.json)
 
 ## Usage Instructions
 
