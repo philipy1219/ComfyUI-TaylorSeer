@@ -6,7 +6,6 @@ from typing import Dict
 import math
 from comfy.ldm.flux.math import attention
 from contextlib import ExitStack
-import comfy.model_management
 
 def create_fluxpatches_dict(new_model):
     diffusion_model = new_model.get_model_object("diffusion_model")

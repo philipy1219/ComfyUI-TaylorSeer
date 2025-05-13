@@ -10,7 +10,8 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ## Project Updates
 
-- **WIP**: Hidream and WAN 2.1 support is on the way
+- **WIP**: WAN 2.1 support is on the way
+- **update**: ```2025/05/13```: Support Hidream, force VRAM purge when checkpoint is changed
 - **update**: ```2025/04/30```: First release, supporting FLUX.
 
 ## Quick Start
@@ -25,13 +26,23 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 [Reference Workflow for FLUX](./workflows/taylorseer_example_flux.json)
 
+[Reference Workflow for Hidream](./workflows/taylorseer_example_hidream_full.json)
+
 ## Usage Instructions
 
-Memory Requirements: The cache needs to be stored in GPU memory for efficient computation. For a 1024*1024 image using FLUX FP8 precision model:
+Memory Requirements Flux: The cache needs to be stored in GPU memory for efficient computation. For a 1024*1024 image using FLUX FP8 precision model:
 
 - Order 0: Increases VRAM usage by 2GB
 - Order 1: Increases VRAM usage by 4GB
 - Order 2: Increases VRAM usage by 6GB
+
+VRAM usage increases linearly with resolution and number of images.
+
+Memory Requirements Hidream: The cache needs to be stored in GPU memory for efficient computation. For a 1024*1024 image using Hidream-full FP8 precision model:
+
+- Order 0: Increases VRAM usage by 5GB
+- Order 1: Increases VRAM usage by 10GB
+- Order 2: Increases VRAM usage by 15GB
 
 VRAM usage increases linearly with resolution and number of images.
 
@@ -40,3 +51,4 @@ Acceleration Ratio: The `first_enhance` parameter can adjust when Taylor Cache i
 ## License
 
 The code in this repository is released under the [GNU General Public License v3.0](./LICENSE).
+git 
