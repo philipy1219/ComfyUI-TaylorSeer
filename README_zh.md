@@ -24,9 +24,9 @@
 
 ### 运行工作流
 
-[FLUX参考工作流](./workflows/taylorseer_example_flux.json)
+[FLUX参考工作流](./examples/taylorseer_example_flux.json)
 
-[Hidream参考工作流](./workflows/taylorseer_example_hidream_full.json)
+[Hidream参考工作流](./examples/taylorseer_example_hidream_full.json)
 
 ## 使用说明
 
