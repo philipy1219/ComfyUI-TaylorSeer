@@ -48,6 +48,13 @@ VRAM使用量随分辨率和图像数量线性增加。
 
 加速比例：`first_enhance`参数可以调整Taylor Cache介入的时间。当first_enhance = 10时，在30次迭代步骤下，结果与原始结果几乎无损，加速比可达2倍。
 
+## 与TeaCache对比
+
+| 提示词 | 原始结果 (steps = 50) | TaylorSeer (steps = 50, order = 1) | TeaCache (steps = 50, rel_l1_thresh = 0.25) | TeaCache (steps = 50, rel_l1_thresh = 0.40) |
+|--------|----------|------------|-----------|-----------|
+| fashion photo of a model wearing black draped plastic fabric designed by Demna Gvasalia, standing in an apocalyptic room, sunglasses, synthetic light, 4K, photoreal, 3D render, | [<img src="./sample_images/12_original.png" width="200px">](./sample_images/12_original.png) | [<img src="./sample_images/12_TaylorSeer.png" width="200px">](./sample_images/12_TaylorSeer.png) | [<img src="./sample_images/12_teacache_25.png" width="200px">](./sample_images/12_teacache_25.png) | [<img src="./sample_images/12_teacache_40.png" width="200px">](./sample_images/12_teacache_40.png) |
+| This picture depicts an anime scene that revolves around a young girl. She is characterized by purple hair tied into two ponytails, each decorated with a bow and pink earmuffs. The girl is wearing dark clothes, a vest-style top and shorts. She has a happy expression, a big smile on her face, and a pearl or something delicate in her mouth, as if she is jokingly feeding herself. | [<img src="./sample_images/122_original.png" width="200px">](./sample_images/122_original.png) | [<img src="./sample_images/122_TaylorSeer.png" width="200px">](./sample_images/122_TaylorSeer.png) | [<img src="./sample_images/122_teacache_25.png" width="200px">](./sample_images/122_teacache_25.png) | [<img src="./sample_images/122_teacache_40.png" width="200px">](./sample_images/122_teacache_40.png) |
+
 ## 许可证
 
 本仓库中的代码在[GNU通用公共许可证v3.0](./LICENSE)下发布。
