@@ -11,6 +11,7 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 ## Project Updates
 
 - **WIP**: WAN 2.1 support is on the way
+- **update**: ```2025/05/25```: Support block swap, now you can run it with low VRAM
 - **update**: ```2025/05/13```: Support Hidream, force VRAM purge when checkpoint is changed
 - **update**: ```2025/04/30```: First release, supporting FLUX.
 
