@@ -55,6 +55,10 @@ def taylorseer_flux_forward(
     transformer_options={},
     attn_mask: Tensor = None,
 ) -> Tensor:
+    
+    if y is None:
+        y = torch.zeros((img.shape[0], self.params.vec_in_dim), device=img.device, dtype=img.dtype)
+
     patches_replace = transformer_options.get("patches_replace", {})
     if img.ndim != 3 or txt.ndim != 3:
         raise ValueError("Input img and txt tensors must have 3 dimensions.")
@@ -118,6 +122,10 @@ def taylorseer_flux_forward(
                 add = control_i[i]
                 if add is not None:
                     img += add
+
+    if img.dtype == torch.float16:
+        img = torch.nan_to_num(img, nan=0.0, posinf=65504, neginf=-65504)
+
 
     img = torch.cat((txt, img), 1)
 
