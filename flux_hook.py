@@ -293,28 +293,24 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
     cache[-1]={}
     cache_index[-1]={}
     cache_index['layer_index']={}
-    cache_dic['attn_map'] = {}
-    cache_dic['attn_map'][-1] = {}
-    cache_dic['attn_map'][-1]['double_stream'] = {}
-    cache_dic['attn_map'][-1]['single_stream'] = {}
 
     cache[-1]['double_stream']={}
     cache[-1]['single_stream']={}
     cache_dic['cache_counter'] = 0
 
+    double_stream_modules = ['attn', 'img_attn', 'img_mlp', 'txt_attn', 'txt_mlp']
+    single_stream_modules = ['total']
     for j in range(19):
         cache[-1]['double_stream'][j] = {}
+        for module in double_stream_modules:
+            cache[-1]['double_stream'][j][module] = {}
         cache_index[-1][j] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['total'] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['txt_mlp'] = {}
-        cache_dic['attn_map'][-1]['double_stream'][j]['img_mlp'] = {}
 
     for j in range(38):
         cache[-1]['single_stream'][j] = {}
+        for module in single_stream_modules:
+            cache[-1]['single_stream'][j][module] = {}
         cache_index[-1][j] = {}
-        cache_dic['attn_map'][-1]['single_stream'][j] = {}
-        cache_dic['attn_map'][-1]['single_stream'][j]['total'] = {}
 
     cache_dic['taylor_cache'] = False
     cache_dic['Delta-DiT'] = False
@@ -331,11 +327,17 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
     cache_dic['max_order'] = max_order
     cache_dic['first_enhance'] = first_enhance
     cache_dic['last_enhance'] = last_enhance
+    cache_dic['cal_threshold'] = fresh_threshold
 
     current = {}
-    current['activated_steps'] = [0]
+    current['current_activated_step'] = 0
+    current['previous_activated_step'] = 0
     current['step'] = 0
     current['num_steps'] = steps
+    current['type'] = None
+    current['layer'] = None
+    current['stream'] = None
+    current['module'] = None
 
     return cache_dic, current
 
@@ -375,8 +377,8 @@ def cal_type(cache_dic, current):
     if (first_step) or (cache_dic['cache_counter'] == fresh_interval - 1 ) or (current['step'] >= cache_dic['last_enhance'] - 1):
         current['type'] = 'full'
         cache_dic['cache_counter'] = 0
-        current['activated_steps'].append(current['step'])
-        #current['activated_times'].append(current['t'])
+        current['previous_activated_step'] = current['current_activated_step']
+        current['current_activated_step'] = current['step']
         force_scheduler(cache_dic, current)
     
     elif (cache_dic['taylor_cache']):
@@ -402,6 +404,7 @@ def cal_type(cache_dic, current):
     #if (current['step'] in [3,2,1,0]):
     #    current['type'] = 'full'
 
+@torch._dynamo.disable
 def derivative_approximation(cache_dic: Dict, current: Dict, feature: torch.Tensor):
     """
     Compute derivative approximation.
@@ -409,7 +412,7 @@ def derivative_approximation(cache_dic: Dict, current: Dict, feature: torch.Tens
     :param cache_dic: Cache dictionary
     :param current: Information of the current step
     """
-    difference_distance = current['activated_steps'][-1] - current['activated_steps'][-2]
+    difference_distance = current['current_activated_step'] - current['previous_activated_step']
     #difference_distance = current['activated_times'][-1] - current['activated_times'][-2]
 
     updated_taylor_factors = {}
@@ -423,8 +426,9 @@ def derivative_approximation(cache_dic: Dict, current: Dict, feature: torch.Tens
 
     cache_dic['cache'][-1][current['stream']][current['layer']][current['module']] = updated_taylor_factors
 
+@torch._dynamo.disable
 def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
-    x = current['step'] - current['activated_steps'][-1]
+    x = current['step'] - current['current_activated_step']
     output = 0
     
     for i in range(len(cache_dic['cache'][-1][current['stream']][current['layer']][current['module']])):
@@ -432,6 +436,7 @@ def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
     
     return output
 
+@torch._dynamo.disable
 def taylor_cache_init(cache_dic: Dict, current: Dict):
     """
     Initialize Taylor cache and allocate storage for different-order derivatives in the Taylor cache.
