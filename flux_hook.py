@@ -65,10 +65,10 @@ def taylorseer_flux_forward(
 
     # running on sequences img
     img = self.img_in(img)
-    vec = self.time_in(timestep_embedding(timesteps, 256).to(img.dtype))
+    vec = self.time_in(timestep_embedding(timesteps.to(img.dtype), 256))
     if self.params.guidance_embed:
         if guidance is not None:
-            vec = vec + self.guidance_in(timestep_embedding(guidance, 256).to(img.dtype))
+            vec = vec + self.guidance_in(timestep_embedding(guidance.to(img.dtype), 256))
 
     vec = vec + self.vector_in(y[:,:self.params.vec_in_dim])
     txt = self.txt_in(txt)
@@ -178,7 +178,7 @@ def flux_double_block_forward(self, img: Tensor, txt: Tensor, vec: Tensor, pe: T
     if current['type'] == 'full':
         
         current['module'] = 'attn'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         
         # prepare image for attention
         img_modulated = self.img_norm1(img)
@@ -213,7 +213,7 @@ def flux_double_block_forward(self, img: Tensor, txt: Tensor, vec: Tensor, pe: T
             txt_attn, img_attn = attn[:, : txt.shape[1]], attn[:, txt.shape[1] :]
         # calculate the img bloks
         current['module'] = 'img_attn'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         img_attn = self.img_attn.proj(img_attn)
         
         derivative_approximation(cache_dic=cache_dic, current=current, feature=img_attn)
@@ -221,20 +221,20 @@ def flux_double_block_forward(self, img: Tensor, txt: Tensor, vec: Tensor, pe: T
         img = img + img_mod1.gate * img_attn
         
         current['module'] = 'img_mlp'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         img_mlp = self.img_mlp((1 + img_mod2.scale) * self.img_norm2(img) + img_mod2.shift)
         derivative_approximation(cache_dic=cache_dic, current=current, feature=img_mlp)
         img = img + img_mod2.gate * img_mlp
 
         # calculate the txt bloks
         current['module'] = 'txt_attn'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         txt_attn = self.txt_attn.proj(txt_attn)
         derivative_approximation(cache_dic=cache_dic, current=current, feature=txt_attn)
         txt += txt_mod1.gate * txt_attn
 
         current['module'] = 'txt_mlp'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         txt_mlp = self.txt_mlp((1 + txt_mod2.scale) * self.txt_norm2(txt) + txt_mod2.shift)
         derivative_approximation(cache_dic=cache_dic, current=current, feature=txt_mlp)
         txt += txt_mod2.gate * txt_mlp
@@ -265,7 +265,7 @@ def flux_single_block_forward(self, x: Tensor, vec: Tensor, pe: Tensor, attn_mas
     current['stream'] = 'single_stream'
     if current['type'] == 'full':
         current['module'] = 'total'
-        taylor_cache_init(cache_dic=cache_dic, current=current)
+        #taylor_cache_init(cache_dic=cache_dic, current=current)
         x_mod = (1 + mod.scale) * self.pre_norm(x) + mod.shift
         qkv, mlp = torch.split(self.linear1(x_mod), [3 * self.hidden_size, self.mlp_hidden_dim], dim=-1)
         q, k, v = qkv.view(qkv.shape[0], qkv.shape[1], 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
@@ -368,7 +368,6 @@ def cal_type(cache_dic, current):
         first_step = (current['step'] < cache_dic['first_enhance'])
         #first_step = (current['step'] <= 3)
 
-    force_fresh = cache_dic['force_fresh']
     if not first_step:
         fresh_interval = cache_dic['cal_threshold']
     else:
@@ -446,12 +445,3 @@ def taylor_cache_init(cache_dic: Dict, current: Dict):
     """
     if (current['step'] == 0) and (cache_dic['taylor_cache']):
         cache_dic['cache'][-1][current['stream']][current['layer']][current['module']] = {}
-
-def force_init(cache_dic, current, tokens):
-    '''
-    Initialization for Force Activation step.
-    '''
-    cache_dic['cache_index'][-1][current['layer']][current['module']] = torch.zeros(tokens.shape[0], tokens.shape[1], dtype=torch.int, device=tokens.device)
-
-    #if current['layer'] == 0:
-    #    cache_dic['cache_index']['layer_index'][current['module']] = torch.zeros(tokens.shape[0], tokens.shape[1], dtype=torch.int, device=tokens.device)
