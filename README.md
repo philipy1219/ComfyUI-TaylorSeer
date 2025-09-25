@@ -10,7 +10,7 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ## Project Updates
 
-- **WIP**: WAN 2.1 support is on the way
+- **update**: ```2025/09/22```: Support [TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py), reducing cache quantity with negligible VRAM increase. Based on TaylorSeer-Lite, now supporting WAN 2.1/2.2 models.
 - **update**: ```2025/05/25```: Support block swap, now you can run it with low VRAM
 - **update**: ```2025/05/13```: Support Hidream, force VRAM purge when checkpoint is changed
 - **update**: ```2025/04/30```: First release, supporting FLUX.
@@ -29,7 +29,13 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 [Reference Workflow for Hidream](./examples/taylorseer_example_hidream_full.json)
 
+[Reference Workflow for FLUX-TaylorSeer-Lite](./examples/taylorseerlite_example_flux.json)
+
+[Reference Workflow for WAN-2.2-TaylorSeer-Lite](./examples/taylorseerlite_example_wan2-2.json)
+
 ## Usage Instructions
+
+### Using TaylorSeer Standard Version
 
 Memory Requirements Flux: The cache needs to be stored in GPU memory for efficient computation. For a 1024*1024 image using FLUX FP8 precision model:
 
@@ -48,6 +54,12 @@ Memory Requirements Hidream: The cache needs to be stored in GPU memory for effi
 VRAM usage increases linearly with resolution and number of images.
 
 Acceleration Ratio: The `first_enhance` parameter can adjust when Taylor Cache intervenes. When first_enhance = 10, with 30 iteration steps, the results are almost lossless compared to the original results, and the acceleration ratio can reach 2x.
+
+### Using TaylorSeer-Lite
+
+Nearly zero VRAM increase.
+
+**Exciting Performance on WAN 2.2**: For 81 frames generation on RTX 5090, TaylorSeer-Lite achieves remarkable acceleration - **386s vs 1176s** (3.05x speedup) compared to the original implementation!
 
 ## Comparison with teacache
 

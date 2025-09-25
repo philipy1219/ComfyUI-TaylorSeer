@@ -10,7 +10,7 @@
 
 ## 项目更新
 
-- **进行中**: WAN 2.1支持即将到来
+- **更新**: ```2025/09/25```: 支持[TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py)，减少缓存的数量，模型运行的显存增加可忽略不计，基于TaylorSeer-Lite支持WAN 2.1/2.2模型。
 - **更新**: ```2025/05/25```: 支持block swap功能，可以用更低的显存运行Hidream和FLUX模型
 - **更新**: ```2025/05/13```: 支持Hidream，当checkpoint改变时，强制卸载旧模型显存
 - **更新**: ```2025/04/30```: 首次发布，支持FLUX。
@@ -29,9 +29,15 @@
 
 [Hidream参考工作流](./examples/taylorseer_example_hidream_full.json)
 
+[FLUX-TaylorSeer-Lite参考工作流](./examples/taylorseerlite_example_flux.json)
+
+[WAN-2.2-TaylorSeer-Lite参考工作流](./examples/taylorseerlite_example_wan2-2.json)
+
 ## 使用说明
 
-FLUX内存需求：缓存需要存储在GPU内存中以进行高效计算。对于使用FLUX FP8精度模型的1024*1024图像：
+### 使用TaylorSeer标准版
+
+FLUX显存需求：缓存需要存储在GPU显存中以进行高效计算。对于使用FLUX FP8精度模型的1024*1024图像：
 
 - 阶数0：增加VRAM使用量2GB
 - 阶数1：增加VRAM使用量4GB
@@ -39,7 +45,7 @@ FLUX内存需求：缓存需要存储在GPU内存中以进行高效计算。对�
 
 VRAM使用量随分辨率和图像数量线性增加。
 
-Hidream内存需求：缓存需要存储在GPU内存中以进行高效计算。对于使用Hidream-full FP8精度模型的1024*1024图像：
+Hidream显存需求：缓存需要存储在GPU显存中以进行高效计算。对于使用Hidream-full FP8精度模型的1024*1024图像：
 
 - 阶数0：增加VRAM使用量5GB
 - 阶数1：增加VRAM使用量10GB
@@ -48,6 +54,10 @@ Hidream内存需求：缓存需要存储在GPU内存中以进行高效计算。�
 VRAM使用量随分辨率和图像数量线性增加。
 
 加速比例：`first_enhance`参数可以调整Taylor Cache介入的时间。当first_enhance = 10时，在30次迭代步骤下，结果与原始结果几乎无损，加速比可达2倍。
+
+### 使用TaylorSeer-Lite
+
+显存几乎零增长
 
 ## 与TeaCache对比
 

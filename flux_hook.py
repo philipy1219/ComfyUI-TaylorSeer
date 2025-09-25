@@ -7,34 +7,40 @@ import math
 from comfy.ldm.flux.math import attention
 from contextlib import ExitStack
 
-def create_fluxpatches_dict(new_model):
+def create_fluxpatches_dict(new_model, type="full"):
     diffusion_model = new_model.get_model_object("diffusion_model")
     
     class ForwardPatcher:
         def __enter__(self):
             self.stack = ExitStack()
             
-            # patch 主 forward 函数
-            self.stack.enter_context(patch.object(
-                diffusion_model,
-                'forward_orig',
-                taylorseer_flux_forward.__get__(diffusion_model, diffusion_model.__class__)
-            ))
-            
-            # patch double_blocks 的 forward 函数
-            for block in diffusion_model.double_blocks:
+            if type == "full":
+                # patch 主 forward 函数
                 self.stack.enter_context(patch.object(
-                    block,
-                    'forward',
-                    flux_double_block_forward.__get__(block, block.__class__)
-                ))
-            
-            # patch single_blocks 的 forward 函数
-            for block in diffusion_model.single_blocks:
+                    diffusion_model,
+                    'forward_orig',
+                    taylorseer_flux_forward.__get__(diffusion_model, diffusion_model.__class__)
+                ))          
+                # patch double_blocks 的 forward 函数
+                for block in diffusion_model.double_blocks:
+                    self.stack.enter_context(patch.object(
+                        block,
+                        'forward',
+                        flux_double_block_forward.__get__(block, block.__class__)
+                    ))
+                # patch single_blocks 的 forward 函数
+                for block in diffusion_model.single_blocks:
+                    self.stack.enter_context(patch.object(
+                        block,
+                        'forward',
+                        flux_single_block_forward.__get__(block, block.__class__)
+                    ))
+            elif type == "lite":
+                # patch Taylor 的 forward 函数
                 self.stack.enter_context(patch.object(
-                    block,
-                    'forward',
-                    flux_single_block_forward.__get__(block, block.__class__)
+                    diffusion_model,
+                    'forward_orig',
+                    taylorseer_lite_flux_forward.__get__(diffusion_model, diffusion_model.__class__)
                 ))
             
         def __exit__(self, exc_type, exc_val, exc_tb):
@@ -283,6 +289,129 @@ def flux_single_block_forward(self, x: Tensor, vec: Tensor, pe: Tensor, attn_mas
         x = torch.nan_to_num(x, nan=0.0, posinf=65504, neginf=-65504)
     return x
 
+def taylorseer_lite_flux_forward(
+    self,
+    img: Tensor,
+    img_ids: Tensor,
+    txt: Tensor,
+    txt_ids: Tensor,
+    timesteps: Tensor,
+    y: Tensor,
+    guidance: Tensor = None,
+    control = None,
+    transformer_options={},
+    attn_mask: Tensor = None,
+) -> Tensor:
+    
+    if y is None:
+        y = torch.zeros((img.shape[0], self.params.vec_in_dim), device=img.device, dtype=img.dtype)
+
+    patches_replace = transformer_options.get("patches_replace", {})
+    if img.ndim != 3 or txt.ndim != 3:
+        raise ValueError("Input img and txt tensors must have 3 dimensions.")
+
+    # running on sequences img
+    img = self.img_in(img)
+    vec = self.time_in(timestep_embedding(timesteps.to(img.dtype), 256))
+    if self.params.guidance_embed:
+        if guidance is not None:
+            vec = vec + self.guidance_in(timestep_embedding(guidance.to(img.dtype), 256))
+
+    vec = vec + self.vector_in(y[:,:self.params.vec_in_dim])
+    txt = self.txt_in(txt)
+
+    if img_ids is not None:
+        ids = torch.cat((txt_ids, img_ids), dim=1)
+        pe = self.pe_embedder(ids)
+    else:
+        pe = None
+
+    blocks_replace = patches_replace.get("dit", {})
+    cal_type(cache_dic=self.cache_dic, current=self.current)
+    self.current['stream'] = 'final_stream'
+    self.current['layer'] = 0
+    self.current['module'] = 'final'
+    if self.current['type'] == 'full':
+        for i, block in enumerate(self.double_blocks):
+            if ("double_block", i) in blocks_replace:
+                def block_wrap(args):
+                    out = {}
+                    out["img"], out["txt"] = block(img=args["img"],
+                                                            txt=args["txt"],
+                                                            vec=args["vec"],
+                                                            pe=args["pe"],
+                                                            attn_mask=args.get("attn_mask"),
+                                                            )
+                    return out
+
+                out = blocks_replace[("double_block", i)]({"img": img,
+                                                            "txt": txt,
+                                                            "vec": vec,
+                                                            "pe": pe,
+                                                            "attn_mask": attn_mask},
+                                                            {
+                                                            "original_block": block_wrap,
+                                                            "transformer_options": transformer_options
+                                                            })
+                txt = out["txt"]
+                img = out["img"]
+            else:
+                img, txt = block(img=img,
+                                txt=txt,
+                                vec=vec,
+                                pe=pe,
+                                attn_mask=attn_mask)
+            if control is not None: # Controlnet
+                control_i = control.get("input")
+                if i < len(control_i):
+                    add = control_i[i]
+                    if add is not None:
+                        img += add
+
+        if img.dtype == torch.float16:
+            img = torch.nan_to_num(img, nan=0.0, posinf=65504, neginf=-65504)
+
+
+        img = torch.cat((txt, img), 1)
+
+        for i, block in enumerate(self.single_blocks):
+            if ("single_block", i) in blocks_replace:
+                def block_wrap(args):
+                    out = {}
+                    out["img"] = block(args["img"],
+                                    vec=args["vec"],
+                                    pe=args["pe"],
+                                    attn_mask=args.get("attn_mask"))
+                    return out
+
+                out = blocks_replace[("single_block", i)]({"img": img,
+                                                            "vec": vec,
+                                                            "pe": pe,
+                                                            "attn_mask": attn_mask},
+                                                            {
+                                                            "original_block": block_wrap,
+                                                            "transformer_options": transformer_options
+                                                            })
+                img = out["img"]
+            else:
+                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask)
+
+            if control is not None: # Controlnet
+                control_o = control.get("output")
+                if i < len(control_o):
+                    add = control_o[i]
+                    if add is not None:
+                        img[:, txt.shape[1] :, ...] += add
+
+        img = img[:, txt.shape[1] :, ...]
+
+        img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
+        derivative_approximation(cache_dic=self.cache_dic, current=self.current, feature=img)
+    elif self.current['type'] == 'Taylor':
+        img = taylor_formula(cache_dic=self.cache_dic, current=self.current)
+    self.current["step"] += 1
+    return img
+
 def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, steps):   
     '''
     Initialization for cache.
@@ -296,10 +425,12 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
 
     cache[-1]['double_stream']={}
     cache[-1]['single_stream']={}
+    cache[-1]['final_stream'] = {}
     cache_dic['cache_counter'] = 0
 
     double_stream_modules = ['attn', 'img_attn', 'img_mlp', 'txt_attn', 'txt_mlp']
     single_stream_modules = ['total']
+    final_stream_modules = ['final']
     for j in range(19):
         cache[-1]['double_stream'][j] = {}
         for module in double_stream_modules:
@@ -311,6 +442,11 @@ def cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, ste
         for module in single_stream_modules:
             cache[-1]['single_stream'][j][module] = {}
         cache_index[-1][j] = {}
+
+    cache[-1]['final_stream'][0] = {}
+    for module in final_stream_modules:
+        cache[-1]['final_stream'][0][module] = {}
+    cache_index[-1][0] = {}
 
     cache_dic['taylor_cache'] = False
     cache_dic['Delta-DiT'] = False
@@ -434,14 +570,3 @@ def taylor_formula(cache_dic: Dict, current: Dict) -> torch.Tensor:
         output += (1 / math.factorial(i)) * cache_dic['cache'][-1][current['stream']][current['layer']][current['module']][i] * (x ** i)
     
     return output
-
-@torch._dynamo.disable
-def taylor_cache_init(cache_dic: Dict, current: Dict):
-    """
-    Initialize Taylor cache and allocate storage for different-order derivatives in the Taylor cache.
-    
-    :param cache_dic: Cache dictionary
-    :param current: Information of the current step
-    """
-    if (current['step'] == 0) and (cache_dic['taylor_cache']):
-        cache_dic['cache'][-1][current['stream']][current['layer']][current['module']] = {}
