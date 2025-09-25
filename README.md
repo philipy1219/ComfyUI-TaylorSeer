@@ -10,7 +10,7 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ## Project Updates
 
-- **update**: ```2025/09/22```: Support [TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py), reducing cache quantity with negligible VRAM increase. Based on TaylorSeer-Lite, now supporting WAN 2.1/2.2 models.
+- **update**: ```2025/09/25```: Support [TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py), reducing cache quantity with negligible VRAM increase. Based on TaylorSeer-Lite, now supporting WAN 2.1/2.2 models.
 - **update**: ```2025/05/25```: Support block swap, now you can run it with low VRAM
 - **update**: ```2025/05/13```: Support Hidream, force VRAM purge when checkpoint is changed
 - **update**: ```2025/04/30```: First release, supporting FLUX.
