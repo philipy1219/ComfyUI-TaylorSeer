@@ -10,6 +10,7 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ## Project Updates
 
+- **update**: ```2025/10/07```: Based on TaylorSeer-Lite, support Qwwn-Image.
 - **update**: ```2025/09/25```: Support [TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py), reducing cache quantity with negligible VRAM increase. Based on TaylorSeer-Lite, now supporting WAN 2.1/2.2 models.
 - **update**: ```2025/05/25```: Support block swap, now you can run it with low VRAM
 - **update**: ```2025/05/13```: Support Hidream, force VRAM purge when checkpoint is changed
@@ -25,13 +26,15 @@ Please ensure your ComfyUI version is newer than commit `c496e53`.
 
 ### Running the Workflow
 
-[Reference Workflow for FLUX](./examples/taylorseer_example_flux.json)
+[Workflow for FLUX](./examples/taylorseer_example_flux.json)
 
-[Reference Workflow for Hidream](./examples/taylorseer_example_hidream_full.json)
+[Workflow for Hidream](./examples/taylorseer_example_hidream_full.json)
 
-[Reference Workflow for FLUX-TaylorSeer-Lite](./examples/taylorseerlite_example_flux.json)
+[Workflow for FLUX-TaylorSeer-Lite](./examples/taylorseerlite_example_flux.json)
 
-[Reference Workflow for WAN-2.2-TaylorSeer-Lite](./examples/taylorseerlite_example_wan2-2.json)
+[Workflow for WAN-2.2-TaylorSeer-Lite](./examples/taylorseerlite_example_wan2-2.json)
+
+[Workflow for Qwen-Image-TaylorSeer-Lite](./examples/taylorseerlite_example_qwenimage.json)
 
 ## Usage Instructions
 

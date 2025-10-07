@@ -1,6 +1,7 @@
 from .flux_hook import create_fluxpatches_dict, cache_init_flux
 from .hidream_hook import create_hidream_patches_dict, cache_init_hidream
 from .wanvideo_hook import create_wanvideo_patches_dict, cache_init_wanvideo
+from .qwenimage_hook import create_qwenimage_patches_dict, cache_init_qwenimage
 import gc
 import comfy.model_management
 
@@ -59,6 +60,20 @@ def wanvideo_block_swap(model, double_block_swap):
     i = 0
     total_offload_memory = 0
     for block in model.model.diffusion_model.blocks:
+        i += 1
+        if i > double_block_swap:
+            block.to(comfy.model_management.get_torch_device(), non_blocking=True)
+        else:
+            block.to(comfy.model_management.unet_offload_device(),non_blocking=True)
+            total_offload_memory += get_module_memory_mb(block)
+    print(f"total_offload_memory: {total_offload_memory} MB")
+    comfy.model_management.soft_empty_cache()
+    gc.collect()
+
+def qwenimage_block_swap(model, double_block_swap):
+    i = 0
+    total_offload_memory = 0
+    for block in model.model.diffusion_model.transformer_blocks:
         i += 1
         if i > double_block_swap:
             block.to(comfy.model_management.get_torch_device(), non_blocking=True)
@@ -135,6 +150,25 @@ class WanvideoBlockSwap:
     FUNCTION = "setargs"
     CATEGORY = "TaylorSeer"
     TITLE = "WanvideoBlockSwap"
+
+    def setargs(self, **kwargs):
+        return (kwargs, )
+
+class QwenimageBlockSwap:
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "double_block_swap": ("INT", {"default": 0, "min": 0, "max": 16, "step": 1, "tooltip": "Double block swap."})
+            }
+        }
+
+    RETURN_TYPES = ("BLOCKSWAPARGS",)
+    RETURN_NAMES = ("block_swap_args",)
+    FUNCTION = "setargs"
+    CATEGORY = "TaylorSeer"
+    TITLE = "QwenimageBlockSwap"
 
     def setargs(self, **kwargs):
         return (kwargs, )
@@ -246,7 +280,7 @@ class TaylorSeerLite:
         return {
             "required": {
                 "model": ("MODEL", {"tooltip": "The diffusion model the TaylorSeer will be applied to."}),
-                "model_type": (["flux", "hidream", "wanvideo"], {"default": "flux", "tooltip": "Supported diffusion model."}),
+                "model_type": (["flux", "hidream", "wanvideo", "qwenimage"], {"default": "flux", "tooltip": "Supported diffusion model."}),
                 "fresh_threshold": ("INT", {"default": 6, "min": 3, "max": 7, "step": 1, "tooltip": "Fresh threshold."}),
                 "max_order": ("INT", {"default": 2, "min": 0, "max": 2, "step": 1, "tooltip": "Max order."}),
                 "first_enhance": ("INT", {"default": 3, "min": 0, "max": 100, "step": 1, "tooltip": "First enhance."}),
@@ -286,6 +320,12 @@ class TaylorSeerLite:
             if self.last_model["type"] == "wanvideo" and self.last_model["id"] != id(new_model.model):
                 cleanup_last_model(self.last_model["id"])
             self.last_model = {"id": id(new_model.model), "type": "wanvideo"}
+        elif "qwenimage" in model_type:
+            context = create_qwenimage_patches_dict(new_model, type="lite")
+            # Check if need to cleanup last model
+            if self.last_model["type"] == "qwenimage" and self.last_model["id"] != id(new_model.model):
+                cleanup_last_model(self.last_model["id"])
+            self.last_model = {"id": id(new_model.model), "type": "qwenimage"}
         else:
             raise ValueError(f"Unknown type {model_type}")
         
@@ -295,6 +335,7 @@ class TaylorSeerLite:
             c = kwargs["c"]
             # check current step
             sigmas = c["transformer_options"]["sample_sigmas"]
+            cond_or_uncond = c["transformer_options"].get("cond_or_uncond", [])
             if "flux" in model_type:
                 double_block_swap = block_swap_args.get("double_block_swap", 0)
                 single_block_swap = block_swap_args.get("single_block_swap", 0)
@@ -302,6 +343,8 @@ class TaylorSeerLite:
                 double_block_swap = block_swap_args.get("double_block_swap", 0)
                 single_block_swap = block_swap_args.get("single_block_swap", 0)
             elif "wanvideo" in model_type:
+                double_block_swap = block_swap_args.get("double_block_swap", 0)
+            elif "qwenimage" in model_type:
                 double_block_swap = block_swap_args.get("double_block_swap", 0)
             matched_step_index = (sigmas == timestep[0]).nonzero()
             if len(matched_step_index) > 0:
@@ -323,11 +366,21 @@ class TaylorSeerLite:
                 elif "wanvideo" in model_type:
                     new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_wanvideo(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
                     wanvideo_block_swap(new_model, double_block_swap)
+                elif "qwenimage" in model_type and current_step_index != len(sigmas) - 2:
+                    if cond_or_uncond == [1]:
+                        new_model.model.diffusion_model.cache_dic_negative, new_model.model.diffusion_model.current_negative = cache_init_qwenimage(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
+                    else:
+                        new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_qwenimage(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
+                    qwenimage_block_swap(new_model, double_block_swap)
             with context:
                 result = model_function(input, timestep, **c)
             if current_step_index == len(sigmas) - 2:
-                del new_model.model.diffusion_model.cache_dic
-                del new_model.model.diffusion_model.current
+                if "qwenimage" in model_type and cond_or_uncond == [1]:
+                    del new_model.model.diffusion_model.cache_dic_negative
+                    del new_model.model.diffusion_model.current_negative
+                else:
+                    del new_model.model.diffusion_model.cache_dic
+                    del new_model.model.diffusion_model.current
                 gc.collect()
                 comfy.model_management.soft_empty_cache()
                 if "flux" in model_type:
@@ -346,6 +399,10 @@ class TaylorSeerLite:
                     if double_block_swap > 0:
                         for block in new_model.model.diffusion_model.blocks:
                             block.to(comfy.model_management.get_torch_device(), non_blocking=True)
+                elif "qwenimage" in model_type:
+                    if double_block_swap > 0:
+                        for block in new_model.model.diffusion_model.transformer_blocks:
+                            block.to(comfy.model_management.get_torch_device(), non_blocking=True)
             return result
 
         new_model.set_model_unet_function_wrapper(unet_wrapper_function)
@@ -357,6 +414,7 @@ NODE_CLASS_MAPPINGS = {
     "FluxBlockSwap": FluxBlockSwap,
     "HidreamBlockSwap": HidreamBlockSwap,
     "WanvideoBlockSwap": WanvideoBlockSwap,
+    "QwenimageBlockSwap": QwenimageBlockSwap,
     "TaylorSeerLite": TaylorSeerLite
 }
 
@@ -365,5 +423,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FluxBlockSwap": "FluxBlockSwap",
     "HidreamBlockSwap": "HidreamBlockSwap",
     "WanvideoBlockSwap": "WanvideoBlockSwap",
+    "QwenimageBlockSwap": "QwenimageBlockSwap",
     "TaylorSeerLite": "TaylorSeerLite"
 }

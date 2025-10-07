@@ -10,6 +10,7 @@
 
 ## 项目更新
 
+- **更新**: ```2025/10/07```: 基于TaylorSeer-Lite支持Qwen-Image
 - **更新**: ```2025/09/25```: 支持[TaylorSeer-Lite](https://github.com/Shenyi-Z/Cache4Diffusion/blob/main/HunyuanImage-2.1/run_hyimage_taylorseer_lite.py)，减少缓存的数量，模型运行的显存增加可忽略不计，基于TaylorSeer-Lite支持WAN 2.1/2.2模型。
 - **更新**: ```2025/05/25```: 支持block swap功能，可以用更低的显存运行Hidream和FLUX模型
 - **更新**: ```2025/05/13```: 支持Hidream，当checkpoint改变时，强制卸载旧模型显存
@@ -32,6 +33,8 @@
 [FLUX-TaylorSeer-Lite参考工作流](./examples/taylorseerlite_example_flux.json)
 
 [WAN-2.2-TaylorSeer-Lite参考工作流](./examples/taylorseerlite_example_wan2-2.json)
+
+[Qwen-Image-TaylorSeer-Lite参考工作流](./examples/taylorseerlite_example_qwenimage.json)
 
 ## 使用说明
 
