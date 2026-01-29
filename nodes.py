@@ -2,6 +2,7 @@ from .flux_hook import create_fluxpatches_dict, cache_init_flux
 from .hidream_hook import create_hidream_patches_dict, cache_init_hidream
 from .wanvideo_hook import create_wanvideo_patches_dict, cache_init_wanvideo
 from .qwenimage_hook import create_qwenimage_patches_dict, cache_init_qwenimage
+from .lumina_hook import create_lumina_patches_dict, cache_init_lumina
 import gc
 import comfy.model_management
 
@@ -280,7 +281,7 @@ class TaylorSeerLite:
         return {
             "required": {
                 "model": ("MODEL", {"tooltip": "The diffusion model the TaylorSeer will be applied to."}),
-                "model_type": (["flux", "hidream", "wanvideo", "qwenimage"], {"default": "flux", "tooltip": "Supported diffusion model."}),
+                "model_type": (["flux", "flux2", "hidream", "wanvideo", "qwenimage", "lumina2"], {"default": "flux", "tooltip": "Supported diffusion model."}),
                 "fresh_threshold": ("INT", {"default": 6, "min": 3, "max": 7, "step": 1, "tooltip": "Fresh threshold."}),
                 "max_order": ("INT", {"default": 2, "min": 0, "max": 2, "step": 1, "tooltip": "Max order."}),
                 "first_enhance": ("INT", {"default": 3, "min": 0, "max": 100, "step": 1, "tooltip": "First enhance."}),
@@ -326,6 +327,12 @@ class TaylorSeerLite:
             if self.last_model["type"] == "qwenimage" and self.last_model["id"] != id(new_model.model):
                 cleanup_last_model(self.last_model["id"])
             self.last_model = {"id": id(new_model.model), "type": "qwenimage"}
+        elif "lumina2" in model_type:
+            context = create_lumina_patches_dict(new_model, type="lite")
+            # Check if need to cleanup last model
+            if self.last_model["type"] == "lumina2" and self.last_model["id"] != id(new_model.model):
+                cleanup_last_model(self.last_model["id"])
+            self.last_model = {"id": id(new_model.model), "type": "lumina2"}
         else:
             raise ValueError(f"Unknown type {model_type}")
         
@@ -346,6 +353,8 @@ class TaylorSeerLite:
                 double_block_swap = block_swap_args.get("double_block_swap", 0)
             elif "qwenimage" in model_type:
                 double_block_swap = block_swap_args.get("double_block_swap", 0)
+            elif "lumina2" in model_type:
+                double_block_swap = block_swap_args.get("double_block_swap", 0)
             matched_step_index = (sigmas == timestep[0]).nonzero()
             if len(matched_step_index) > 0:
                 current_step_index = matched_step_index.item()
@@ -357,7 +366,9 @@ class TaylorSeerLite:
                         break
             # init cache
             if current_step_index == 0 or hasattr(new_model.model.diffusion_model, 'cache_dic') is False:
-                if "flux" in model_type:
+                if "flux2" in model_type:
+                    new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
+                elif "flux" in model_type:
                     new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_flux(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
                     flux_block_swap(new_model, double_block_swap, single_block_swap)
                 elif "hidream" in model_type:
@@ -372,10 +383,15 @@ class TaylorSeerLite:
                     else:
                         new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_qwenimage(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
                     qwenimage_block_swap(new_model, double_block_swap)
+                elif "lumina2" in model_type and current_step_index != len(sigmas) - 2:
+                    if cond_or_uncond == [1]:
+                        new_model.model.diffusion_model.cache_dic_negative, new_model.model.diffusion_model.current_negative = cache_init_lumina(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
+                    else:
+                        new_model.model.diffusion_model.cache_dic, new_model.model.diffusion_model.current = cache_init_lumina(fresh_threshold, max_order, first_enhance, last_enhance, len(sigmas))
             with context:
                 result = model_function(input, timestep, **c)
             if current_step_index == len(sigmas) - 2:
-                if "qwenimage" in model_type and cond_or_uncond == [1]:
+                if model_type in ["qwenimage", "lumina2"] and cond_or_uncond == [1]:
                     del new_model.model.diffusion_model.cache_dic_negative
                     del new_model.model.diffusion_model.current_negative
                 else:

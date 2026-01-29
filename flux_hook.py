@@ -303,9 +303,7 @@ def taylorseer_lite_flux_forward(
     attn_mask: Tensor = None,
 ) -> Tensor:
     
-    if y is None:
-        y = torch.zeros((img.shape[0], self.params.vec_in_dim), device=img.device, dtype=img.dtype)
-
+    patches = transformer_options.get("patches", {})
     patches_replace = transformer_options.get("patches_replace", {})
     if img.ndim != 3 or txt.ndim != 3:
         raise ValueError("Input img and txt tensors must have 3 dimensions.")
@@ -317,8 +315,26 @@ def taylorseer_lite_flux_forward(
         if guidance is not None:
             vec = vec + self.guidance_in(timestep_embedding(guidance.to(img.dtype), 256))
 
-    vec = vec + self.vector_in(y[:,:self.params.vec_in_dim])
+    if self.vector_in is not None:
+        if y is None:
+            y = torch.zeros((img.shape[0], self.params.vec_in_dim), device=img.device, dtype=img.dtype)
+        vec = vec + self.vector_in(y[:, :self.params.vec_in_dim])
+
+    if self.txt_norm is not None:
+        txt = self.txt_norm(txt)
     txt = self.txt_in(txt)
+
+    vec_orig = vec
+    if self.params.global_modulation:
+        vec = (self.double_stream_modulation_img(vec_orig), self.double_stream_modulation_txt(vec_orig))
+
+    if "post_input" in patches:
+        for p in patches["post_input"]:
+            out = p({"img": img, "txt": txt, "img_ids": img_ids, "txt_ids": txt_ids})
+            img = out["img"]
+            txt = out["txt"]
+            img_ids = out["img_ids"]
+            txt_ids = out["txt_ids"]
 
     if img_ids is not None:
         ids = torch.cat((txt_ids, img_ids), dim=1)
@@ -332,7 +348,10 @@ def taylorseer_lite_flux_forward(
     self.current['layer'] = 0
     self.current['module'] = 'final'
     if self.current['type'] == 'full':
+        transformer_options["total_blocks"] = len(self.double_blocks)
+        transformer_options["block_type"] = "double"
         for i, block in enumerate(self.double_blocks):
+            transformer_options["block_index"] = i
             if ("double_block", i) in blocks_replace:
                 def block_wrap(args):
                     out = {}
@@ -341,6 +360,7 @@ def taylorseer_lite_flux_forward(
                                                             vec=args["vec"],
                                                             pe=args["pe"],
                                                             attn_mask=args.get("attn_mask"),
+                                                            transformer_options=args.get("transformer_options")
                                                             )
                     return out
 
@@ -348,10 +368,10 @@ def taylorseer_lite_flux_forward(
                                                             "txt": txt,
                                                             "vec": vec,
                                                             "pe": pe,
-                                                            "attn_mask": attn_mask},
+                                                            "attn_mask": attn_mask,
+                                                            "transformer_options": transformer_options},
                                                             {
-                                                            "original_block": block_wrap,
-                                                            "transformer_options": transformer_options
+                                                            "original_block": block_wrap
                                                             })
                 txt = out["txt"]
                 img = out["img"]
@@ -360,7 +380,8 @@ def taylorseer_lite_flux_forward(
                                 txt=txt,
                                 vec=vec,
                                 pe=pe,
-                                attn_mask=attn_mask)
+                                attn_mask=attn_mask,
+                                transformer_options=transformer_options)
             if control is not None: # Controlnet
                 control_i = control.get("input")
                 if i < len(control_i):
@@ -371,30 +392,36 @@ def taylorseer_lite_flux_forward(
         if img.dtype == torch.float16:
             img = torch.nan_to_num(img, nan=0.0, posinf=65504, neginf=-65504)
 
-
         img = torch.cat((txt, img), 1)
 
+        if self.params.global_modulation:
+            vec, _ = self.single_stream_modulation(vec_orig)
+
+        transformer_options["total_blocks"] = len(self.single_blocks)
+        transformer_options["block_type"] = "single"
         for i, block in enumerate(self.single_blocks):
+            transformer_options["block_index"] = i
             if ("single_block", i) in blocks_replace:
                 def block_wrap(args):
                     out = {}
                     out["img"] = block(args["img"],
                                     vec=args["vec"],
                                     pe=args["pe"],
-                                    attn_mask=args.get("attn_mask"))
+                                    attn_mask=args.get("attn_mask"),
+                                    transformer_options=args.get("transformer_options"))
                     return out
 
                 out = blocks_replace[("single_block", i)]({"img": img,
                                                             "vec": vec,
                                                             "pe": pe,
-                                                            "attn_mask": attn_mask},
+                                                            "attn_mask": attn_mask,
+                                                            "transformer_options": transformer_options},
                                                             {
-                                                            "original_block": block_wrap,
-                                                            "transformer_options": transformer_options
+                                                            "original_block": block_wrap
                                                             })
                 img = out["img"]
             else:
-                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask)
+                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask, transformer_options=transformer_options)
 
             if control is not None: # Controlnet
                 control_o = control.get("output")
@@ -405,7 +432,7 @@ def taylorseer_lite_flux_forward(
 
         img = img[:, txt.shape[1] :, ...]
 
-        img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
+        img = self.final_layer(img, vec_orig)  # (N, T, patch_size ** 2 * out_channels)
         derivative_approximation(cache_dic=self.cache_dic, current=self.current, feature=img)
     elif self.current['type'] == 'Taylor':
         img = taylor_formula(cache_dic=self.cache_dic, current=self.current)

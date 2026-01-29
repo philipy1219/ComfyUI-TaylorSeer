@@ -1,13 +1,11 @@
-from torch import Tensor
 import torch
 from unittest.mock import patch
 from typing import Dict
 import math
-from comfy.ldm.wan.model import sinusoidal_embedding_1d
 from contextlib import ExitStack
-import copy
+import comfy.ldm.common_dit
 
-def create_qwenimage_patches_dict(new_model, type="lite"):
+def create_lumina_patches_dict(new_model, type="lite"):
     diffusion_model = new_model.get_model_object("diffusion_model")
     
     class ForwardPatcher:
@@ -19,7 +17,7 @@ def create_qwenimage_patches_dict(new_model, type="lite"):
                 self.stack.enter_context(patch.object(
                     diffusion_model,
                     '_forward',
-                    taylorseer_lite_qwenimage_forward.__get__(diffusion_model, diffusion_model.__class__)
+                    taylorseer_lite_lumina_forward.__get__(diffusion_model, diffusion_model.__class__)
                 ))
             
         def __exit__(self, exc_type, exc_val, exc_tb):
@@ -27,79 +25,51 @@ def create_qwenimage_patches_dict(new_model, type="lite"):
     
     return ForwardPatcher()
 
-def taylorseer_lite_qwenimage_forward(
+def taylorseer_lite_lumina_forward(
     self,
     x,
     timesteps,
     context,
-    attention_mask=None,
-    ref_latents=None,
-    additional_t_cond=None,
-    transformer_options={},
-    control=None,
+    num_tokens, 
+    attention_mask=None, 
+    ref_latents=[], 
+    ref_contexts=[], 
+    siglip_feats=[],
+    transformer_options={}, 
     **kwargs
 ):
-    
-    timestep = timesteps
-    encoder_hidden_states = context
-    encoder_hidden_states_mask = attention_mask
+    omni = len(ref_latents) > 0
+    if omni:
+        timesteps = torch.cat([timesteps * 0, timesteps], dim=0)
+    t = 1.0 - timesteps
+    cap_feats = context
+    cap_mask = attention_mask
+    bs, c, h, w = x.shape
+    x = comfy.ldm.common_dit.pad_to_patch_size(x, (self.patch_size, self.patch_size))
+    """
+    Forward pass of NextDiT.
+    t: (N,) tensor of diffusion timesteps
+    y: (N,) tensor of text tokens/features
+    """
 
-    hidden_states, img_ids, orig_shape = self.process_img(x)
-    num_embeds = hidden_states.shape[1]
+    t = self.t_embedder(t * self.time_scale, dtype=x.dtype)  # (N, D)
+    adaln_input = t
 
-    timestep_zero_index = None
-    if ref_latents is not None:
-        h = 0
-        w = 0
-        index = 0
-        ref_method = kwargs.get("ref_latents_method", self.default_ref_method)
-        index_ref_method = (ref_method == "index") or (ref_method == "index_timestep_zero")
-        negative_ref_method = ref_method == "negative_index"
-        timestep_zero = ref_method == "index_timestep_zero"
-        for ref in ref_latents:
-            if index_ref_method:
-                index += 1
-                h_offset = 0
-                w_offset = 0
-            elif negative_ref_method:
-                index -= 1
-                h_offset = 0
-                w_offset = 0
-            else:
-                index = 1
-                h_offset = 0
-                w_offset = 0
-                if ref.shape[-2] + h > ref.shape[-1] + w:
-                    w_offset = w
-                else:
-                    h_offset = h
-                h = max(h, ref.shape[-2] + h_offset)
-                w = max(w, ref.shape[-1] + w_offset)
+    if self.clip_text_pooled_proj is not None:
+        pooled = kwargs.get("clip_text_pooled", None)
+        if pooled is not None:
+            pooled = self.clip_text_pooled_proj(pooled)
+        else:
+            pooled = torch.zeros((x.shape[0], self.clip_text_dim), device=x.device, dtype=x.dtype)
 
-            kontext, kontext_ids, _ = self.process_img(ref, index=index, h_offset=h_offset, w_offset=w_offset)
-            hidden_states = torch.cat([hidden_states, kontext], dim=1)
-            img_ids = torch.cat([img_ids, kontext_ids], dim=1)
-        if timestep_zero:
-            if index > 0:
-                timestep = torch.cat([timestep, timestep * 0], dim=0)
-                timestep_zero_index = num_embeds
+        adaln_input = self.time_text_embed(torch.cat((t, pooled), dim=-1))
 
-    txt_start = round(max(((x.shape[-1] + (self.patch_size // 2)) // self.patch_size) // 2, ((x.shape[-2] + (self.patch_size // 2)) // self.patch_size) // 2))
-    txt_ids = torch.arange(txt_start, txt_start + context.shape[1], device=x.device).reshape(1, -1, 1).repeat(x.shape[0], 1, 3)
-    ids = torch.cat((txt_ids, img_ids), dim=1)
-    image_rotary_emb = self.pe_embedder(ids).to(x.dtype).contiguous()
-    del ids, txt_ids, img_ids
+    x_is_tensor = isinstance(x, torch.Tensor)
+    img, mask, img_size, cap_size, freqs_cis, timestep_zero_index = self.patchify_and_embed(x, cap_feats, cap_mask, adaln_input, num_tokens, ref_latents=ref_latents, ref_contexts=ref_contexts, siglip_feats=siglip_feats, transformer_options=transformer_options)
+    freqs_cis = freqs_cis.to(img.device)
 
-    hidden_states = self.img_in(hidden_states)
-    encoder_hidden_states = self.txt_norm(encoder_hidden_states)
-    encoder_hidden_states = self.txt_in(encoder_hidden_states)
-
-    temb = self.time_text_embed(timestep, hidden_states, additional_t_cond)
-
-    patches_replace = transformer_options.get("patches_replace", {})
     patches = transformer_options.get("patches", {})
     cond_or_uncond = transformer_options.get("cond_or_uncond", [])
-    blocks_replace = patches_replace.get("dit", {})
     if cond_or_uncond == [1]:
         cache_dic_now = self.cache_dic_negative
         current_now = self.current_negative
@@ -111,58 +81,31 @@ def taylorseer_lite_qwenimage_forward(
     current_now['stream'] = 'final_stream'
     current_now['layer'] = 0
     current_now['module'] = 'final'
-    transformer_options["total_blocks"] = len(self.transformer_blocks)
+    transformer_options["total_blocks"] = len(self.layers)
     transformer_options["block_type"] = "double"
     if current_now['type'] == 'full':
-        for i, block in enumerate(self.transformer_blocks):
+        img_input = img
+        for i, layer in enumerate(self.layers):
             transformer_options["block_index"] = i
-            if ("double_block", i) in blocks_replace:
-                def block_wrap(args):
-                    out = {}
-                    out["txt"], out["img"] = block(hidden_states=args["img"], encoder_hidden_states=args["txt"], encoder_hidden_states_mask=encoder_hidden_states_mask, temb=args["vec"], image_rotary_emb=args["pe"], timestep_zero_index=timestep_zero_index, transformer_options=args["transformer_options"])
-                    return out
-                out = blocks_replace[("double_block", i)]({"img": hidden_states, "txt": encoder_hidden_states, "vec": temb, "pe": image_rotary_emb, "transformer_options": transformer_options}, {"original_block": block_wrap})
-                hidden_states = out["img"]
-                encoder_hidden_states = out["txt"]
-            else:
-                encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    timestep_zero_index=timestep_zero_index,
-                    transformer_options=transformer_options,
-                )
-
+            img = layer(img, mask, freqs_cis, adaln_input, timestep_zero_index=timestep_zero_index, transformer_options=transformer_options)
             if "double_block" in patches:
                 for p in patches["double_block"]:
-                    out = p({"img": hidden_states, "txt": encoder_hidden_states, "x": x, "block_index": i, "transformer_options": transformer_options})
-                    hidden_states = out["img"]
-                    encoder_hidden_states = out["txt"]
+                    out = p({"img": img[:, cap_size[0]:], "img_input": img_input[:, cap_size[0]:], "txt": img[:, :cap_size[0]], "pe": freqs_cis[:, cap_size[0]:], "vec": adaln_input, "x": x, "block_index": i, "transformer_options": transformer_options})
+                    if "img" in out:
+                        img[:, cap_size[0]:] = out["img"]
+                    if "txt" in out:
+                        img[:, :cap_size[0]] = out["txt"]
 
-            if control is not None: # Controlnet
-                control_i = control.get("input")
-                if i < len(control_i):
-                    add = control_i[i]
-                    if add is not None:
-                        hidden_states[:, :add.shape[1]] += add
-
-        if timestep_zero_index is not None:
-            temb = temb.chunk(2, dim=0)[0]
-
-        hidden_states = self.norm_out(hidden_states, temb)
-        hidden_states = self.proj_out(hidden_states)
-
-        derivative_approximation(cache_dic=cache_dic_now, current=current_now, feature=hidden_states)
+        img = self.final_layer(img, adaln_input, timestep_zero_index=timestep_zero_index)
+        derivative_approximation(cache_dic=cache_dic_now, current=current_now, feature=img)
     elif current_now['type'] == 'Taylor':
-        hidden_states = taylor_formula(cache_dic=cache_dic_now, current=current_now)
-    hidden_states = hidden_states[:, :num_embeds].view(orig_shape[0], orig_shape[-3], orig_shape[-2] // 2, orig_shape[-1] // 2, orig_shape[1], 2, 2)
-    hidden_states = hidden_states.permute(0, 4, 1, 2, 5, 3, 6)
+        img = taylor_formula(cache_dic=cache_dic_now, current=current_now)
+    img = self.unpatchify(img, img_size, cap_size, return_tensor=x_is_tensor)[:, :, :h, :w]
     current_now["step"] += 1
-    return hidden_states.reshape(orig_shape)[:, :, :, :x.shape[-2], :x.shape[-1]]
+    return -img
 
-def cache_init_qwenimage(fresh_threshold, max_order, first_enhance, last_enhance, steps):   
+def cache_init_lumina(fresh_threshold, max_order, first_enhance, last_enhance, steps):   
+
     '''
     Initialization for cache.
     '''
